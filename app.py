@@ -7,6 +7,11 @@ import random
 from datetime import datetime, timedelta
 from dash.dependencies import Input, Output
 import numpy as np
+import requests
+from prophet import Prophet
+from statsmodels.tsa.arima.model import ARIMA
+import yfinance as yf
+from flask_caching import Cache
 
 # Sample Data Generator
 def generate_stock_data():
@@ -22,8 +27,9 @@ stock_data = generate_stock_data()
 
 # Dash App Setup
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
+cache = Cache(app.server, config={'CACHE_TYPE': 'simple'})
 
-# Custom CSS
+# Custom CSS for better aesthetics
 app.css.append_css({
     'external_url': 'https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css'
 })
@@ -44,7 +50,7 @@ app.layout = html.Div([
                          {'label': 'TSLA - Tesla Inc.', 'value': 'TSLA'}],
                 value='AAPL',
                 clearable=False,
-                style={'color': 'black'}
+                className='text-dark'  # Ensure dropdown text is visible
             )
         ], width=3),
         dbc.Col([
@@ -56,15 +62,17 @@ app.layout = html.Div([
                          {'label': '1 Hour', 'value': '1H'}],
                 value='15min',
                 clearable=False,
-                style={'color': 'black'}
+                className='text-dark'  # Ensure dropdown text is visible
             )
         ], width=3)
-    ], className='mb-3'),
+    ], className='mb-4'),
     
     dbc.Tabs([
         dbc.Tab(label="Candlestick Chart", tab_id="tab-1"),
         dbc.Tab(label="Technical Indicators", tab_id="tab-2"),
         dbc.Tab(label="Volume Analysis", tab_id="tab-3"),
+        dbc.Tab(label="Advanced Charts", tab_id="tab-4"),  # New tab for advanced charts
+        dbc.Tab(label="Predictive Analysis", tab_id="tab-5"),  # New tab for predictive analysis
     ], id="tabs", active_tab="tab-1"),
     
     html.Div(id="tab-content", className="p-4"),
@@ -92,9 +100,10 @@ def update_chart(n, stock, active_tab):
     candlestick_fig.update_layout(
         template='plotly_dark', 
         title=f"{stock} Live Candlestick Chart", 
-        height=400,
+        height=360,  # Increased height
         xaxis_title="Time",
-        yaxis_title="Price"
+        yaxis_title="Price",
+        margin=dict(l=50, r=50, t=80, b=50)
     )
     
     # Technical Indicators
@@ -114,6 +123,27 @@ def update_chart(n, stock, active_tab):
     # Volume Analysis
     volume_fig = go.Figure(data=[go.Bar(x=df['Time'], y=df['Volume'], marker_color='cyan')])
     volume_fig.update_layout(template='plotly_dark', title=f"{stock} Volume", height=300, xaxis_title="Time", yaxis_title="Volume")
+    
+    # Advanced Charts
+    # Moving Average Chart
+    ma_fig = go.Figure()
+    ma_fig.add_trace(go.Scatter(x=df['Time'], y=df['Close'], mode='lines', name='Close Price', line=dict(color='lime')))
+    ma_fig.add_trace(go.Scatter(x=df['Time'], y=df['MA'], mode='lines', name='Moving Average', line=dict(color='orange')))
+    ma_fig.update_layout(template='plotly_dark', title=f"{stock} Moving Average", height=300, xaxis_title="Time", yaxis_title="Price")
+    
+    # Bollinger Bands Chart
+    df['Upper Band'], df['Lower Band'] = compute_bollinger_bands(df['Close'])
+    bollinger_fig = go.Figure()
+    bollinger_fig.add_trace(go.Scatter(x=df['Time'], y=df['Upper Band'], mode='lines', name='Upper Band', line=dict(color='red')))
+    bollinger_fig.add_trace(go.Scatter(x=df['Time'], y=df['Lower Band'], mode='lines', name='Lower Band', line=dict(color='blue')))
+    bollinger_fig.add_trace(go.Scatter(x=df['Time'], y=df['Close'], mode='lines', name='Close Price', line=dict(color='lime')))
+    bollinger_fig.update_layout(template='plotly_dark', title=f"{stock} Bollinger Bands", height=300, xaxis_title="Time", yaxis_title="Price")
+    
+    # Predictive Analysis
+    forecast = predict_future_prices(df)
+    forecast_fig = go.Figure()
+    forecast_fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Prediction', line=dict(color='lime')))
+    forecast_fig.update_layout(template='plotly_dark', title=f"{stock} Price Prediction", height=300, xaxis_title="Time", yaxis_title="Price")
     
     # Stock Information
     stock_info = {
@@ -161,6 +191,15 @@ def update_chart(n, stock, active_tab):
         tab_content = dbc.Row([
             dbc.Col(dcc.Graph(figure=volume_fig), width=12)
         ])
+    elif active_tab == "tab-4":  # Advanced Charts Tab
+        tab_content = dbc.Row([
+            dbc.Col(dcc.Graph(figure=ma_fig), width=6),
+            dbc.Col(dcc.Graph(figure=bollinger_fig), width=6)
+        ])
+    elif active_tab == "tab-5":  # Predictive Analysis Tab
+        tab_content = dbc.Row([
+            dbc.Col(dcc.Graph(figure=forecast_fig), width=12)
+        ])
     else:
         tab_content = html.Div()
     
@@ -199,6 +238,21 @@ def compute_macd(prices, slow=26, fast=12, signal=9):
     macd_signal = macd.ewm(span=signal, adjust=False).mean()
     macd_hist = macd - macd_signal
     return macd, macd_signal, macd_hist
+
+def compute_bollinger_bands(prices, window=20, num_std=2):
+    rolling_mean = prices.rolling(window=window).mean()
+    rolling_std = prices.rolling(window=window).std()
+    upper_band = rolling_mean + (rolling_std * num_std)
+    lower_band = rolling_mean - (rolling_std * num_std)
+    return upper_band, lower_band
+
+# Predictive Analysis
+def predict_future_prices(df):
+    model = Prophet()
+    model.fit(df.rename(columns={'Time': 'ds', 'Close': 'y'}))
+    future = model.make_future_dataframe(periods=30)
+    forecast = model.predict(future)
+    return forecast
 
 # Run App
 if __name__ == '__main__':
