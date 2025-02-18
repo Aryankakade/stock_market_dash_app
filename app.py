@@ -29,6 +29,9 @@ stock_data = generate_stock_data()
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 cache = Cache(app.server, config={'CACHE_TYPE': 'simple'})
 
+# Expose server for Gunicorn
+server = app.server  # This is the important line!
+
 # Custom CSS for better aesthetics
 app.css.append_css({
     'external_url': 'https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css'
